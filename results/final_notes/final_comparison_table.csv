@@ -1,0 +1,7 @@
+model,validation_micro_f1,validation_macro_f1,validation_mcc,test_micro_f1,test_macro_f1,test_mcc,notes
+Official DenseNet-161,,, ,0.907,0.619,0.899,Official HyperKvasir baseline
+Official ResNet-152 + DenseNet-161 Avg,,, ,0.910,0.617,0.902,Official ensemble baseline
+SigLIP2-224 fine-tuned,0.912116,0.669827,0.904647,0.903327,0.632887,0.895265,Best single-model Macro F1
+SigLIP2-224 3-checkpoint ensemble,,, ,0.906466,0.616556,0.898558,Improves test accuracy but lowers Macro F1
+SigLIP2-224 3-checkpoint ensemble + flip TTA,0.915254,0.629071,0.908020,0.908349,0.626271,0.900615,Best test accuracy and MCC
+SigLIP2-224 hierarchy,0.890144,0.627187,0.881040,,,Worse than baseline; not used

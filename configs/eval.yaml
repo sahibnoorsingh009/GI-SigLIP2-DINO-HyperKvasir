@@ -1,0 +1,15 @@
+paths:
+  data_root: /workspace/data/gi-endoscopy-megabank-stage2
+  split_csv: metadata/hyperkvasir_23class_official_70_15_15_split.csv
+  label_list: results/label_list.txt
+  checkpoint: checkpoints/siglip2_base_supervised/best.pt
+  output_dir: results/final_eval
+model:
+  name: google/siglip2-base-patch16-224
+  image_size: 224
+  use_hierarchy: false
+eval:
+  batch_size: 64
+  num_workers: 8
+  split: test
+  tta_hflip: true

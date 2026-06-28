@@ -1,0 +1,21 @@
+experiment_name: gi_siglip2_dino_ssl_full_megabank_budget
+note: Start SSL only after supervised baseline works.
+model:
+  backbone: google/siglip2-base-patch16-224
+  image_size: 224
+hardware:
+  gpu: RTX_PRO_6000
+  num_gpus: 1
+  precision: bf16
+data:
+  data_root: /workspace/data/gi-endoscopy-megabank-stage2
+  metadata_csv: metadata/all_meta.parquet
+views:
+  global_crops: 2
+  local_crops_start: 2
+optimization:
+  optimizer: adamw
+  lr: 1.0e-5
+  max_steps: 10000
+  batch_size_per_gpu_start: 64
+  gradient_accumulation_steps: 2

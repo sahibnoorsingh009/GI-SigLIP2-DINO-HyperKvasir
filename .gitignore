@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.ipynb_checkpoints/
+.venv/
+venv/
+env/
+
+# Large data
+data/
+*.tar
+*.zip
+*.jpg
+*.jpeg
+*.png
+*.webp
+
+# Hugging Face / cache
+.cache/
+huggingface/
+hf_cache/
+
+# Checkpoints / model weights
+checkpoints/
+*.pt
+*.pth
+*.safetensors
+*.bin
+*.ckpt
+
+# Large result files
+results/**/predictions.csv
+results/**/test_predictions.csv
+results/**/val_predictions.csv
+results/**/confusion_matrix.csv
+results/**/test_confusion_matrix.csv
+results/**/val_confusion_matrix.csv
+
+# Logs
+*.log
+wandb/
+runs/
+
+# OS
+.DS_Store
+
+# Generated metadata caches
+metadata/*.parquet

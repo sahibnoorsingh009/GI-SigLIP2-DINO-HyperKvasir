@@ -1,0 +1,32 @@
+experiment_name: siglip2_224_seed44
+seed: 44
+
+paths:
+  data_root: /workspace/data/gi-endoscopy-megabank-stage2
+  split_csv: metadata/hyperkvasir_23class_official_70_15_15_split.csv
+  label_list: results/label_list.txt
+  output_dir: checkpoints/siglip2_224_seed44
+
+model:
+  name: google/siglip2-base-patch16-224
+  image_size: 224
+  freeze_encoder: false
+  use_hierarchy: false
+
+training:
+  epochs: 15
+  batch_size: 32
+  grad_accum_steps: 1
+  num_workers: 8
+  precision: bf16
+  lr_encoder: 1.0e-5
+  lr_head: 1.0e-4
+  weight_decay: 0.04
+  label_smoothing: 0.05
+  weighted_sampler: true
+  class_weighting: inverse_sqrt
+  early_stop_patience: 5
+
+selection:
+  primary_metric: macro_f1
+  secondary_metric: mcc

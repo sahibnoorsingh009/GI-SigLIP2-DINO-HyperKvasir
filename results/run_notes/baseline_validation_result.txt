@@ -1,0 +1,13 @@
+Model: google/siglip2-base-patch16-224
+Training: supervised fine-tuning on official HyperKvasir 23-class train split
+Selection metric: validation Macro F1
+
+Best validation metrics:
+accuracy: 0.9121155053358443
+macro_precision: 0.6690848788290191
+macro_recall: 0.673556268371609
+macro_f1: 0.6698267071053655
+micro_precision: 0.9121155053358443
+micro_recall: 0.9121155053358443
+micro_f1: 0.9121155053358443
+mcc: 0.9046472272543985
