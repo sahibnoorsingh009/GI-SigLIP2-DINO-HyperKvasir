@@ -1,0 +1,28 @@
+SSL checkpoint validation selection:
+
+Old supervised SigLIP2 validation baseline:
+macro_f1 = 0.6698267071
+accuracy = 0.9121155053
+mcc = 0.9046472273
+
+Best SSL checkpoint:
+SSL step 12500 fine-tuned
+macro_f1 = 0.6793352898
+accuracy = 0.9033270559
+mcc = 0.8950754038
+
+Second best:
+SSL 40k final fine-tuned
+macro_f1 = 0.6740558503
+accuracy = 0.8989328311
+mcc = 0.8905060650
+
+Third best:
+SSL step 7500 fine-tuned
+macro_f1 = 0.6693784505
+accuracy = 0.8995605775
+mcc = 0.8910908595
+
+Decision:
+SSL improved validation Macro F1. Select SSL step 12500 as best single checkpoint.
+Next: run validation ensemble using top SSL fine-tuned checkpoints.

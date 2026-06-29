@@ -1,0 +1,42 @@
+DINO/iBOT SSL 10k checkpoint evaluation on HyperKvasir validation.
+
+Previous supervised SigLIP2-224 validation baseline:
+accuracy: 0.9121155053
+macro_f1: 0.6698267071
+micro_f1: 0.9121155053
+mcc: 0.9046472273
+
+SSL step 2500 fine-tuned:
+accuracy: 0.9033270559
+macro_f1: 0.6294486309
+micro_f1: 0.9033270559
+mcc: 0.8952759600
+
+SSL step 5000 fine-tuned:
+accuracy: 0.8819836786
+macro_f1: 0.6264691964
+micro_f1: 0.8819836786
+mcc: 0.8724542762
+
+SSL step 7500 fine-tuned:
+accuracy: 0.8995605775
+macro_f1: 0.6693784505
+micro_f1: 0.8995605775
+mcc: 0.8910908595
+
+SSL step 10000 fine-tuned:
+accuracy: 0.8995605775
+macro_f1: 0.6306603054
+micro_f1: 0.8995605775
+mcc: 0.8912899491
+
+SSL final checkpoint fine-tuned:
+accuracy: 0.9026993095
+macro_f1: 0.6635417907
+micro_f1: 0.9026993095
+mcc: 0.8946635796
+
+Decision:
+Best SSL checkpoint so far is SSL step 7500 with validation Macro F1 = 0.6693784505.
+It nearly matches but does not clearly beat the previous supervised SigLIP2 validation Macro F1 = 0.6698267071.
+Continue SSL to 40k on the full MegaBank dataset and re-evaluate later.

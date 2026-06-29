@@ -1,0 +1,276 @@
+import argparse, io, json, tarfile
+from pathlib import Path
+
+import pandas as pd
+import numpy as np
+from PIL import Image
+from tqdm import tqdm
+
+import torch
+import torch.nn as nn
+from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
+from torchvision import transforms
+from transformers import AutoModel
+
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support, matthews_corrcoef
+
+
+class FamilyDataset(Dataset):
+    def __init__(self, split_csv, data_root, split, family_labels, label_to_id, image_size=224, train=False):
+        df = pd.read_csv(split_csv)
+        df = df[df["split"].eq(split)].copy()
+        df = df[df["label"].isin(family_labels)].reset_index(drop=True)
+
+        self.df = df
+        self.data_root = Path(data_root)
+        self.label_to_id = label_to_id
+        self.tar_cache = {}
+
+        if train:
+            self.tf = transforms.Compose([
+                transforms.RandomResizedCrop(image_size, scale=(0.70, 1.0)),
+                transforms.RandomHorizontalFlip(p=0.5),
+                transforms.RandomRotation(degrees=10),
+                transforms.ColorJitter(brightness=0.10, contrast=0.10, saturation=0.05, hue=0.01),
+                transforms.RandomApply([transforms.GaussianBlur(kernel_size=5, sigma=(0.1, 1.0))], p=0.10),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+            ])
+        else:
+            self.tf = transforms.Compose([
+                transforms.Resize((image_size, image_size)),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+            ])
+
+    def __len__(self):
+        return len(self.df)
+
+    def _resolve_shard(self, shard_file):
+        p = Path(str(shard_file))
+        candidates = [
+            self.data_root / p,
+            self.data_root / "data" / p,
+            self.data_root / "data" / "loose_image_shards" / p.name,
+            self.data_root / "data" / "kvasir_capsule_video_frame_shards" / p.name,
+            self.data_root / p.name,
+        ]
+        for c in candidates:
+            if c.exists():
+                return c
+        hits = list(self.data_root.rglob(p.name))
+        if hits:
+            return hits[0]
+        raise FileNotFoundError(f"Shard not found: {shard_file}")
+
+    def _get_tar(self, shard_path):
+        key = str(shard_path)
+        cached = self.tar_cache.get(key)
+        if cached is None:
+            tf = tarfile.open(key, "r")
+            members = tf.getnames()
+            basename_map = {Path(x).name: x for x in members}
+            cached = (tf, set(members), basename_map)
+            self.tar_cache[key] = cached
+        return cached
+
+    def _load_image(self, row):
+        shard = self._resolve_shard(row["shard_file"])
+        member = str(row["path_in_shard"])
+        tf, members, basename_map = self._get_tar(shard)
+
+        candidates = [member, Path(member).name, "./" + member]
+        if Path(member).name in basename_map:
+            candidates.append(basename_map[Path(member).name])
+
+        for cand in candidates:
+            if cand in members:
+                f = tf.extractfile(cand)
+                return Image.open(io.BytesIO(f.read())).convert("RGB")
+
+        base = Path(member).name
+        for name in members:
+            if name.endswith(base):
+                f = tf.extractfile(name)
+                return Image.open(io.BytesIO(f.read())).convert("RGB")
+
+        raise KeyError(f"Missing member: {member}")
+
+    def __getitem__(self, idx):
+        row = self.df.iloc[idx]
+        img = self._load_image(row)
+        x = self.tf(img)
+        y = self.label_to_id[row["label"]]
+        return x, torch.tensor(y).long()
+
+
+class SigLIPFamilyClassifier(nn.Module):
+    def __init__(self, model_name, n_classes, init_ckpt=None):
+        super().__init__()
+        self.backbone = AutoModel.from_pretrained(model_name)
+        self.vision_model = self.backbone.vision_model if hasattr(self.backbone, "vision_model") else self.backbone
+        hidden = getattr(self.vision_model.config, "hidden_size", 768)
+        self.head = nn.Linear(hidden, n_classes)
+
+        # Optional initialize from 23-class supervised checkpoint if compatible.
+        if init_ckpt:
+            ckpt = torch.load(init_ckpt, map_location="cpu")
+            sd = ckpt.get("model", ckpt)
+            vision_sd = {}
+            for k, v in sd.items():
+                if k.startswith("vision_model."):
+                    vision_sd[k.replace("vision_model.", "")] = v
+                elif k.startswith("backbone.vision_model."):
+                    vision_sd[k.replace("backbone.vision_model.", "")] = v
+            if len(vision_sd) > 0:
+                missing, unexpected = self.vision_model.load_state_dict(vision_sd, strict=False)
+                print("Loaded base vision weights:", len(vision_sd), "missing:", len(missing), "unexpected:", len(unexpected))
+
+    def forward(self, x):
+        out = self.vision_model(pixel_values=x)
+        if hasattr(out, "pooler_output") and out.pooler_output is not None:
+            feat = out.pooler_output
+        else:
+            feat = out.last_hidden_state.mean(dim=1)
+        return self.head(feat)
+
+
+def metrics(y_true, y_pred):
+    mp, mr, mf, _ = precision_recall_fscore_support(y_true, y_pred, average="macro", zero_division=0)
+    mip, mir, mif, _ = precision_recall_fscore_support(y_true, y_pred, average="micro", zero_division=0)
+    return {
+        "accuracy": accuracy_score(y_true, y_pred),
+        "macro_precision": mp,
+        "macro_recall": mr,
+        "macro_f1": mf,
+        "micro_precision": mip,
+        "micro_recall": mir,
+        "micro_f1": mif,
+        "mcc": matthews_corrcoef(y_true, y_pred),
+    }
+
+
+@torch.no_grad()
+def evaluate(model, loader, device):
+    model.eval()
+    ys, ps = [], []
+    for x, y in tqdm(loader, desc="eval"):
+        x = x.to(device)
+        logits = model(x)
+        pred = logits.argmax(1).cpu().numpy().tolist()
+        ys.extend(y.numpy().tolist())
+        ps.extend(pred)
+    return metrics(ys, ps)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--split_csv", default="metadata/hyperkvasir_23class_official_70_15_15_split.csv")
+    ap.add_argument("--data_root", default="/workspace/data/gi-endoscopy-megabank-stage2")
+    ap.add_argument("--family_name", required=True)
+    ap.add_argument("--family_labels", nargs="+", required=True)
+    ap.add_argument("--out_dir", required=True)
+    ap.add_argument("--model_name", default="google/siglip2-base-patch16-224")
+    ap.add_argument("--init_ckpt", default=None)
+    ap.add_argument("--image_size", type=int, default=224)
+    ap.add_argument("--batch_size", type=int, default=16)
+    ap.add_argument("--epochs", type=int, default=25)
+    ap.add_argument("--lr_encoder", type=float, default=5e-6)
+    ap.add_argument("--lr_head", type=float, default=1e-4)
+    ap.add_argument("--num_workers", type=int, default=8)
+    args = ap.parse_args()
+
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    labels = sorted(args.family_labels)
+    label_to_id = {l: i for i, l in enumerate(labels)}
+    id_to_label = {i: l for l, i in label_to_id.items()}
+
+    with open(out_dir / "labels.json", "w") as f:
+        json.dump({"labels": labels, "label_to_id": label_to_id, "id_to_label": id_to_label}, f, indent=2)
+
+    train_ds = FamilyDataset(args.split_csv, args.data_root, "train", labels, label_to_id, args.image_size, train=True)
+    val_ds = FamilyDataset(args.split_csv, args.data_root, "val", labels, label_to_id, args.image_size, train=False)
+
+    print("family:", args.family_name)
+    print("labels:", labels)
+    print("train:", len(train_ds), "val:", len(val_ds))
+    print("train counts:")
+    print(train_ds.df["label"].value_counts())
+
+    train_y = train_ds.df["label"].map(label_to_id).values
+    counts = np.bincount(train_y, minlength=len(labels))
+    class_weights = 1.0 / np.sqrt(np.maximum(counts, 1))
+    sample_weights = class_weights[train_y]
+
+    sampler = WeightedRandomSampler(
+        torch.DoubleTensor(sample_weights),
+        num_samples=len(sample_weights),
+        replacement=True,
+    )
+
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, sampler=sampler,
+                              num_workers=args.num_workers, pin_memory=True,
+                              persistent_workers=args.num_workers > 0)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False,
+                            num_workers=args.num_workers, pin_memory=True,
+                            persistent_workers=args.num_workers > 0)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = SigLIPFamilyClassifier(args.model_name, len(labels), init_ckpt=args.init_ckpt).to(device)
+
+    ce_weights = torch.tensor(class_weights, dtype=torch.float32, device=device)
+    loss_fn = nn.CrossEntropyLoss(weight=ce_weights, label_smoothing=0.03)
+
+    opt = torch.optim.AdamW([
+        {"params": model.vision_model.parameters(), "lr": args.lr_encoder},
+        {"params": model.head.parameters(), "lr": args.lr_head},
+    ], weight_decay=0.04)
+
+    best = -1
+    best_metrics = None
+
+    for epoch in range(1, args.epochs + 1):
+        model.train()
+        losses = []
+        for x, y in tqdm(train_loader, desc=f"train {args.family_name} epoch {epoch}"):
+            x = x.to(device, non_blocking=True)
+            y = y.to(device, non_blocking=True)
+
+            opt.zero_grad(set_to_none=True)
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=torch.cuda.is_available()):
+                logits = model(x)
+                loss = loss_fn(logits, y)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            opt.step()
+            losses.append(float(loss.item()))
+
+        val_metrics = evaluate(model, val_loader, device)
+        val_metrics["epoch"] = epoch
+        val_metrics["train_loss"] = float(np.mean(losses))
+        print("VAL:", val_metrics)
+
+        score = val_metrics["accuracy"]  # for specialist, accuracy inside family is primary
+        if score > best:
+            best = score
+            best_metrics = val_metrics
+            torch.save({
+                "model": model.state_dict(),
+                "family_name": args.family_name,
+                "labels": labels,
+                "label_to_id": label_to_id,
+                "id_to_label": id_to_label,
+                "val_metrics": val_metrics,
+            }, out_dir / "best.pt")
+            with open(out_dir / "best_metrics.json", "w") as f:
+                json.dump(best_metrics, f, indent=2)
+            print("NEW BEST:", best_metrics)
+
+    print("DONE", args.family_name)
+    print("BEST", best_metrics)
+
+
+if __name__ == "__main__":
+    main()
